@@ -18,7 +18,8 @@ from core.address.models import NormalizedAddress
 
 logger = logging.getLogger(__name__)
 
-REGISTRY_DIR = Path(__file__).resolve().parent.parent.parent / "registry"
+# backend/core/discovery/registry.py → parents[2] == backend/
+REGISTRY_DIR = Path(__file__).resolve().parents[2] / "registry"
 
 
 @dataclass

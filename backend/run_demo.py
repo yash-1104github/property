@@ -3,13 +3,16 @@
 Standalone demo: scrape property tax records for
 21013 DANA Drive, Battle Creek, MI 49017 (Calhoun County)
 
-Usage:
-    python run_demo.py                  # Headless mode (default)
-    python run_demo.py --visible        # Show browser window
-    python run_demo.py --no-llm         # Skip LLM enrichment
+Usage (from repository root):
+    python backend/run_demo.py                  # Headless mode (default)
+    python backend/run_demo.py --visible        # Show browser window
+    python backend/run_demo.py --no-llm         # Skip LLM enrichment
+
+Or from the backend folder:
+    cd backend && python run_demo.py
 
 Requirements:
-    python3 -m pip install -r requirements.txt
+    cd backend && python3 -m pip install -r requirements.txt
     python3 -m playwright install chromium   # required once per machine / venv
 """
 
@@ -23,9 +26,11 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
-sys.path.insert(0, str(Path(__file__).resolve().parent))
+_BACKEND_ROOT = Path(__file__).resolve().parent
+_REPO_ROOT = _BACKEND_ROOT.parent
 
-load_dotenv(Path(__file__).resolve().parent / ".env")
+sys.path.insert(0, str(_BACKEND_ROOT))
+load_dotenv(_REPO_ROOT / ".env")
 
 from core.address.normalizer import normalize_address
 from core.orchestration.pipeline import run_pipeline

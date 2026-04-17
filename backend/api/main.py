@@ -7,9 +7,12 @@ from dotenv import load_dotenv
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+# Backend root (folder containing `api`, `core`, `scrapers`, `registry`).
+_BACKEND_ROOT = Path(__file__).resolve().parent.parent
+_REPO_ROOT = _BACKEND_ROOT.parent
 
-load_dotenv(Path(__file__).resolve().parent.parent / ".env")
+sys.path.insert(0, str(_BACKEND_ROOT))
+load_dotenv(_REPO_ROOT / ".env")
 
 from api.routes import health, scrape
 
