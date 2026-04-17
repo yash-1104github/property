@@ -1,0 +1,115 @@
+Property Scraping Platform — Manager Brief (1 page)
+
+Goal
+  Build a scalable system that takes a property address and returns structured property data
+  (tax, ownership, parcel, legal) from public government/property portals worldwide.
+
+Why this is hard (plain English)
+  There is no single global “property records API.”
+  Every location uses different websites and vendors:
+    - Different languages and address formats
+    - Different site layouts and workflows
+    - Dynamic websites (JavaScript), login requirements, and anti-bot protections
+  So the main challenge is not “scraping one website,” it’s building a platform that can
+  reliably find and use the right site for any jurisdiction.
+
+Core idea: a “Source Registry” + a “Try-Until-Success” Engine
+  We treat every official portal as a reusable “data source connector.”
+
+  1) Source Registry (the platform’s phonebook)
+     We maintain a database of sources (3,000+ is normal for US counties alone).
+     Each source entry stores:
+       - Jurisdiction: country → state/province → county → (optional) municipality/city
+       - Portal URL and vendor type (e.g., BS&A, Tyler, custom county site)
+       - What data is available (tax, parcel, ownership, etc.)
+       - How to search (address / parcel number / owner name)
+       - Priority order (what to try first)
+       - Operational flags (requires browser, notes, last verified, enabled/disabled)
+
+     Why this matters:
+       - Coverage scales by adding rows, not rewriting code.
+       - We can quickly swap priorities when a site breaks or a better source exists.
+       - We can track reliability and keep improving over time.
+       - The system can automatically “fallback” through multiple portals for the same address.
+
+  2) Address Normalization (make input usable everywhere)
+     The user gives a free-form address.
+     We standardize it to: street number/name, city, state, ZIP, country, and county.
+     This determines which jurisdiction to query in the registry.
+
+  3) Source Resolver (the “recursive” fallback chain)
+     “Recursive” here does NOT mean endlessly crawling the internet.
+     It means we walk a controlled hierarchy and fallback order until we succeed:
+       - Try municipality/city sources first (most specific)
+       - If not found, try county sources
+       - If still not found, try state/province sources (if applicable)
+
+     For each jurisdiction level, we try sources in priority order:
+       Source A → Source B → Source C → ... until we get a valid record.
+
+  4) Scraper Fleet (how we actually interact with portals)
+     Two-tier execution for cost and reliability:
+       - Tier 1: fast HTTP (cheapest) for simple/static sites
+       - Tier 2: real browser automation (Playwright) for dynamic/protected sites
+
+     Why we need a real browser:
+       Many portals (like BS&A) are JavaScript apps that don’t expose simple HTML pages.
+       The browser behaves like a user: fill search box, open results, open parcel details.
+
+  5) Extraction (turn web pages into clean JSON)
+     Once we reach a parcel detail page, we extract into a consistent schema:
+       - parcel_number, owner_name, owner_address
+       - assessed_value, taxable_value, tax_year/tax_history (when available)
+       - building info (year built, living area, etc.) when published
+
+     We use Gemini as an “adaptive parser” when layouts vary:
+       - Faster to maintain across thousands of sites
+       - More resilient to small website redesigns
+     We validate output and assign confidence so we know what’s reliable vs questionable.
+
+  6) Evidence + Audit (operational reliability)
+     We store:
+       - which source worked
+       - what failed (errors)
+       - optional HTML/screenshot artifacts for debugging
+     This reduces time-to-fix when sites change and allows measurable success rates.
+
+What we will build (deliverables)
+  - An API: submit address → get property record + confidence + “source used”
+  - A Site Registry DB with 3,000+ sources and an admin process for updates
+  - A scraper plugin system (vendor connectors) for common portal types
+  - Monitoring dashboards: success rate by jurisdiction, latency, and cost per request
+
+Phased plan (realistic rollout)
+  Phase 1: Foundation (4–6 weeks)
+    - Database-backed site registry + basic admin workflow (import/update sources)
+    - Address normalization and jurisdiction routing
+    - Working connectors for 1–2 vendor types (e.g., BS&A)
+    - End-to-end API and logging
+
+  Phase 2: Coverage Expansion (6–10 weeks)
+    - Add more vendor connectors (top platforms used by many counties/cities)
+    - Import hundreds/thousands more sources into the registry
+    - Add retry strategies, rate limiting, and evidence capture
+
+  Phase 3: International + Hard Sites (ongoing)
+    - More languages, country-specific rules, and alternate discovery paths
+    - Better anti-bot handling and human review workflow for low-confidence cases
+
+Risks and how we manage them
+  - Websites change often → mitigate via registry updates + Gemini extraction + evidence logs
+  - Some portals block automation → mitigate via throttling, proxies (where allowed), and fallbacks
+  - Data availability differs by jurisdiction → mitigate by trying multiple sources and returning confidence
+  - Cost (browser + LLM) → mitigate with tiered execution and caching (HTTP first, browser second)
+
+How success will be measured
+  - Coverage: number of jurisdictions with at least one working source
+  - Success rate: % of addresses returning a parcel record
+  - Accuracy: field correctness and completeness (validated + confidence-scored)
+  - Time: median time per request
+  - Maintainability: time to fix when a site changes (should decrease with evidence + registry)
+
+One-line summary
+  We scale property scraping by treating portals as data sources in a registry and running a
+  controlled fallback workflow that tries the right sites in order until we retrieve a record.
+

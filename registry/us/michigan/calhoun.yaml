@@ -1,0 +1,63 @@
+# Calhoun County, MI — sources indexed from NETR Online public records directory.
+# Directory: https://publicrecords.netronline.com/state/MI/county/calhoun
+#
+# NETR links "Go to Data Online" for:
+#   - Equalization → BS&A uid 662 (county-wide search; preferred for unknown township)
+#   - Mapping/GIS → FetchGIS Calhoun
+# Township-specific BS&A sites (e.g. Bedford Charter uid 995) are listed as fallbacks.
+
+jurisdiction:
+  country: US
+  state: MI
+  county: Calhoun
+  municipality: null
+
+sources:
+  - name: BS&A — Calhoun County Equalization (NETR Online directory)
+    base_url: https://bsaonline.com
+    uid: "662"
+    search_type: address
+    data_types:
+      - tax
+      - ownership
+      - parcel
+      - valuation
+      - building_info
+    scraper: us_michigan_bsa_online
+    requires_browser: true
+    params:
+      netronline_directory_url: https://publicrecords.netronline.com/state/MI/county/calhoun
+      netronline_agency: Calhoun Equalization Office
+    last_verified: "2026-04-14"
+
+  - name: BS&A — Bedford Charter Township
+    base_url: https://bsaonline.com
+    uid: "995"
+    search_type: address
+    data_types:
+      - tax
+      - ownership
+      - parcel
+      - valuation
+      - building_info
+    scraper: us_michigan_bsa_online
+    requires_browser: true
+    params:
+      notes: Use when county-wide Equalization search does not return the parcel
+    last_verified: "2026-04-14"
+
+  - name: FetchGIS — Calhoun County (NETR / GIS link)
+    base_url: https://app.fetchgis.com
+    params:
+      currentMap: calhoun
+      netronline_directory_url: https://publicrecords.netronline.com/state/MI/county/calhoun
+    search_type: address
+    data_types:
+      - parcel
+      - ownership
+      - valuation
+      - building_info
+      - tax_history
+    scraper: us_michigan_fetchgis
+    requires_browser: true
+    last_verified: "2026-04-14"
