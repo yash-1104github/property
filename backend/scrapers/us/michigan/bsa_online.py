@@ -17,6 +17,7 @@ Navigation flow:
 import logging
 import re
 from datetime import datetime, timezone
+from urllib.parse import quote_plus
 
 from playwright.async_api import Browser, Page, Playwright, async_playwright
 
@@ -64,6 +65,7 @@ class BSAOnlineScraper(BaseScraper):
                 self._playwright = await async_playwright().start()
                 self._browser = await self._playwright.chromium.launch(
                     headless=self.headless,
+                    args=["--disable-blink-features=AutomationControlled"],
                 )
             except Exception as e:
                 err = str(e)
@@ -90,7 +92,16 @@ class BSAOnlineScraper(BaseScraper):
 
     async def scrape(self, address: NormalizedAddress) -> PropertyRecord | None:
         browser = await self._get_browser()
-        page = await browser.new_page()
+        context = await browser.new_context(
+            user_agent=(
+                "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+                "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
+            ),
+            viewport={"width": 1365, "height": 900},
+            locale="en-US",
+            timezone_id="America/Detroit",
+        )
+        page = await context.new_page()
         page.set_default_timeout(60000)
 
         try:
@@ -101,7 +112,7 @@ class BSAOnlineScraper(BaseScraper):
             )
             return None
         finally:
-            await page.close()
+            await context.close()
 
     @staticmethod
     def _search_queries(address: NormalizedAddress) -> list[str]:
@@ -161,14 +172,35 @@ class BSAOnlineScraper(BaseScraper):
         except Exception:
             return False
 
-    async def _wait_for_search_results_ready(self, page: Page, timeout_ms: int = 35000) -> None:
-        """BS&A loads grid data asynchronously after navigation; wait for rows or explicit empty."""
+    @staticmethod
+    def _is_non_detail_href(href: str) -> bool:
+        """BS&A wraps some navigation in PropertySearch URLs; avoid treating those as parcel links."""
+        if not href:
+            return True
+        if "PropertySearchResults" in href:
+            return True
+        if "SearchText=" in href:
+            return True
+        return False
+
+    async def _wait_for_search_results_ready(
+        self,
+        page: Page,
+        address: NormalizedAddress | None = None,
+        timeout_ms: int = 35000,
+    ) -> None:
+        """Wait for async results: grid/table, property links, or card-style 'Showing … items' lists."""
+        num = (address.street_number or "").strip() if address else ""
+        st = (address.street_name or "").strip().upper() if address else ""
         try:
             await page.wait_for_function(
-                """() => {
-                  const h = [...document.querySelectorAll('h2,h3,h4,h6')];
-                  if (h.some(el => (el.textContent || '').includes('Loading Data'))) return false;
+                """(tokens) => {
+                  const num = (tokens[0] || '').trim();
+                  const street = (tokens[1] || '').toUpperCase();
                   const body = document.body.innerText || '';
+                  const loading = [...document.querySelectorAll('h2,h3,h4,h6')].some(
+                    el => (el.textContent || '').includes('Loading Data'));
+                  if (loading) return false;
                   if (body.includes('No Records Found')) return true;
                   const rows = document.querySelectorAll(
                     '.ag-body-viewport .ag-row:not(.ag-header-row), ' +
@@ -176,15 +208,30 @@ class BSAOnlineScraper(BaseScraper):
                     'div[role="row"][row-index]:not([row-index="-1"]), ' +
                     'table tbody tr'
                   );
-                  return rows.length > 0;
+                  if (rows.length > 0) return true;
+                  const propLinks = [...document.querySelectorAll('a[href*="/Property"]')].filter(a => {
+                    const h = a.getAttribute('href') || '';
+                    if (h.includes('PropertySearchResults')) return false;
+                    if (h.includes('SearchText=')) return false;
+                    return h.includes('/Property');
+                  });
+                  if (propLinks.length > 0) return true;
+                  if (num && body.includes(num)) {
+                    if (street && body.toUpperCase().includes(street)) {
+                      if (/Showing\\s+\\d+\\s*-\\s*\\d+\\s+of\\s+\\d+/i.test(body)) return true;
+                      if (body.includes('Owned By') || body.includes('Parcel')) return true;
+                    }
+                  }
+                  return false;
                 }""",
+                arg=[num, st],
                 timeout=timeout_ms,
                 polling=400,
             )
         except Exception:
             logger.warning("Timed out waiting for BS&A result rows to render")
 
-    async def _prefer_list_view(self, page: Page) -> None:
+    async def _prefer_list_view(self, page: Page, address: NormalizedAddress | None = None) -> None:
         """List view often exposes stable table rows; Grid may delay row mount in headless."""
         try:
             lst = page.get_by_role("button", name="List")
@@ -192,9 +239,27 @@ class BSAOnlineScraper(BaseScraper):
                 return
             await lst.first.click(timeout=5000)
             await page.wait_for_timeout(800)
-            await self._wait_for_search_results_ready(page, timeout_ms=25000)
+            await self._wait_for_search_results_ready(page, address, timeout_ms=25000)
         except Exception:
             logger.debug("Could not switch to List view")
+
+    async def _soft_wait_after_navigation(self, page: Page, timeout_ms: int = 25000) -> None:
+        """BS&A is SPA-heavy; avoid unbounded networkidle waits that can exceed 60s."""
+        try:
+            await page.wait_for_load_state("domcontentloaded", timeout=min(15000, timeout_ms))
+        except Exception:
+            pass
+        try:
+            await page.wait_for_load_state("networkidle", timeout=min(12000, timeout_ms))
+        except Exception:
+            pass
+
+    async def _security_verification_blocks(self, page: Page) -> bool:
+        try:
+            loc = page.get_by_text("Security Verification", exact=False)
+            return await loc.first.is_visible(timeout=2500)
+        except Exception:
+            return False
 
     async def _click_first_ag_row_js(self, page: Page) -> bool:
         """Click first data row via DOM (works when Playwright locators miss virtualized grids)."""
@@ -213,10 +278,62 @@ class BSAOnlineScraper(BaseScraper):
             }"""
         )
         if clicked:
-            try:
-                await page.wait_for_load_state("networkidle")
-            except Exception:
-                pass
+            await self._soft_wait_after_navigation(page)
+            return True
+        return False
+
+    async def _click_result_card_js(self, page: Page, address: NormalizedAddress) -> bool:
+        """DOM click for card-style results where Playwright locators miss the hit target."""
+        num = (address.street_number or "").strip()
+        street = (address.street_name or "").strip().upper()
+        if not num:
+            return False
+        clicked = await page.evaluate(
+            """([num, street]) => {
+              const n = String(num);
+              const s = String(street || '').toUpperCase();
+              const matches = (t) => {
+                const u = (t || '').toUpperCase();
+                if (!u.includes(n)) return false;
+                if (s && !u.includes(s)) return false;
+                return true;
+              };
+              const bad = (h) => {
+                if (!h) return true;
+                if (h.includes('PropertySearchResults')) return true;
+                if (h.includes('SearchText=')) return true;
+                return false;
+              };
+              const links = [...document.querySelectorAll('a[href]')];
+              for (const a of links) {
+                const href = a.getAttribute('href') || '';
+                if (bad(href)) continue;
+                if (!href.includes('/Property')) continue;
+                if (matches(a.innerText || '')) { a.click(); return true; }
+              }
+              for (const a of links) {
+                const href = a.getAttribute('href') || '';
+                if (bad(href)) continue;
+                if (!href.includes('/Property')) continue;
+                a.click();
+                return true;
+              }
+              for (const el of document.querySelectorAll('a, button, [role="button"], div[tabindex="0"]')) {
+                const t = el.innerText || el.textContent || '';
+                if (t.length > 200) continue;
+                if (!matches(t)) continue;
+                const u = t.toUpperCase();
+                if (u.includes('FILTER') || u.includes('SEARCH') || u.includes('LIST') || u.includes('GRID'))
+                  continue;
+                el.click();
+                return true;
+              }
+              return false;
+            }""",
+            [num, street],
+        )
+        if clicked:
+            await self._soft_wait_after_navigation(page)
             return True
         return False
 
@@ -225,13 +342,59 @@ class BSAOnlineScraper(BaseScraper):
         num = (address.street_number or "").strip()
         street = (address.street_name or "").strip().upper()
 
+        if await self._click_result_card_js(page, address):
+            return True
+
+        # Anchors to property detail (Calhoun / refreshed BS&A card list)
+        if num:
+            detail_links = page.locator('a[href*="/Property/"]').filter(
+                has_text=re.compile(re.escape(num))
+            )
+            n_dl = await detail_links.count()
+            for i in range(n_dl):
+                link = detail_links.nth(i)
+                href = (await link.get_attribute("href")) or ""
+                if self._is_non_detail_href(href):
+                    continue
+                text = (await link.inner_text()).upper()
+                if street and street not in text:
+                    continue
+                try:
+                    await link.click(timeout=15000)
+                    await self._soft_wait_after_navigation(page)
+                    return True
+                except Exception:
+                    continue
+            for i in range(n_dl):
+                link = detail_links.nth(i)
+                href = (await link.get_attribute("href")) or ""
+                if self._is_non_detail_href(href):
+                    continue
+                try:
+                    await link.click(timeout=15000)
+                    await self._soft_wait_after_navigation(page)
+                    return True
+                except Exception:
+                    continue
+
+        # Clickable card / row containing street number (non-link wrappers)
+        if num and street:
+            try:
+                row = page.get_by_text(re.compile(rf"{re.escape(num)}\s+{re.escape(street)}", re.I)).first
+                if await row.count() > 0:
+                    await row.click(timeout=15000)
+                    await self._soft_wait_after_navigation(page)
+                    return True
+            except Exception:
+                pass
+
         # Role-based row (often populated after List view + async load)
         if num:
             try:
                 role_row = page.get_by_role("row", name=re.compile(re.escape(num), re.I))
                 if await role_row.count() > 0:
                     await role_row.first.click()
-                    await page.wait_for_load_state("networkidle")
+                    await self._soft_wait_after_navigation(page)
                     return True
             except Exception:
                 pass
@@ -248,11 +411,11 @@ class BSAOnlineScraper(BaseScraper):
                 text = (await row.inner_text()).upper()
                 if num and num in text and (not street or street in text):
                     await row.click(timeout=10000)
-                    await page.wait_for_load_state("networkidle")
+                    await self._soft_wait_after_navigation(page)
                     return True
             try:
                 await ag_rows.first.click(timeout=10000)
-                await page.wait_for_load_state("networkidle")
+                await self._soft_wait_after_navigation(page)
                 return True
             except Exception:
                 pass
@@ -267,7 +430,7 @@ class BSAOnlineScraper(BaseScraper):
                 link = row.locator("a").first
                 if await link.count() > 0:
                     await link.click()
-                    await page.wait_for_load_state("networkidle")
+                    await self._soft_wait_after_navigation(page)
                     return True
 
         # Grid / list: property detail links (exclude search results self-links)
@@ -276,33 +439,33 @@ class BSAOnlineScraper(BaseScraper):
         for i in range(n):
             link = links.nth(i)
             href = (await link.get_attribute("href")) or ""
-            if "PropertySearch" in href or "PropertySearchResults" in href:
+            if self._is_non_detail_href(href):
                 continue
             text = (await link.inner_text()).upper()
             if num and num in text and street and street in text:
                 await link.click()
-                await page.wait_for_load_state("networkidle")
+                await self._soft_wait_after_navigation(page)
                 return True
 
         for i in range(n):
             link = links.nth(i)
             href = (await link.get_attribute("href")) or ""
-            if "PropertySearch" in href or "PropertySearchResults" in href:
+            if self._is_non_detail_href(href):
                 continue
             text = (await link.inner_text()).upper()
             if num and num in text:
                 await link.click()
-                await page.wait_for_load_state("networkidle")
+                await self._soft_wait_after_navigation(page)
                 return True
 
         # Last resort: first plausible property link
         for i in range(n):
             link = links.nth(i)
             href = (await link.get_attribute("href")) or ""
-            if "PropertySearch" in href:
+            if self._is_non_detail_href(href):
                 continue
             await link.click()
-            await page.wait_for_load_state("networkidle")
+            await self._soft_wait_after_navigation(page)
             return True
 
         if await self._click_first_ag_row_js(page):
@@ -310,24 +473,52 @@ class BSAOnlineScraper(BaseScraper):
 
         return False
 
-    async def _do_scrape(self, page: Page, address: NormalizedAddress) -> PropertyRecord | None:
-        url = f"{MUNICIPALITY_HOME}?uid={self.uid}"
-        logger.info("Loading BSA Online: %s", url)
-        await page.goto(url, wait_until="domcontentloaded", timeout=60000)
-        await page.wait_for_load_state("networkidle")
-        await self._dismiss_overlays(page)
+    async def _raise_if_security_wall(self, page: Page) -> None:
+        if await self._security_verification_blocks(page):
+            raise RuntimeError(
+                "BS&A blocked automation with Security Verification (checkbox). "
+                "Try another source or use proxy/stealth/human-in-the-loop."
+            )
 
-        # Some BS&A tenants trigger a human verification checkbox (anti-bot).
-        # When this appears, we fail fast so the pipeline can try the next source.
-        try:
-            if await page.locator("text=Security Verification").first.is_visible():
-                raise RuntimeError(
-                    "BS&A blocked automation with Security Verification (checkbox). "
-                    "Try another source or use proxy/stealth/human-in-the-loop."
-                )
-        except Exception:
-            # If locator check fails, continue normally.
-            pass
+    async def _scrape_via_direct_property_search(self, page: Page, address: NormalizedAddress) -> bool:
+        """
+        Open the same URL shape the site uses after an address search, e.g.:
+        /PropertySearch/PropertySearchResults?SearchType=1&uid=662&SearchText=...
+        This is more reliable than waiting for SPA navigation from MunicipalityHome.
+        """
+        for q in self._search_queries(address):
+            st = quote_plus(q)
+            direct = (
+                f"{BSA_BASE}/PropertySearch/PropertySearchResults"
+                f"?SearchType=1&uid={self.uid}&SearchText={st}"
+            )
+            logger.info("Trying BS&A PropertySearchResults URL (uid=%s)", self.uid)
+            try:
+                await page.goto(direct, wait_until="domcontentloaded", timeout=60000)
+            except Exception as exc:
+                logger.warning("PropertySearchResults goto failed for %r: %s", q, exc)
+                continue
+            await self._soft_wait_after_navigation(page)
+            await self._dismiss_overlays(page)
+            await self._raise_if_security_wall(page)
+            await self._wait_for_search_results_ready(page, address, timeout_ms=45000)
+            if await self._has_no_results(page):
+                logger.info("No records (direct URL) for query %r", q)
+                continue
+            await self._prefer_list_view(page, address)
+            if await self._click_property_result(page, address):
+                return True
+        return False
+
+    async def _scrape_via_municipality_home(
+        self, page: Page, address: NormalizedAddress, home_url: str
+    ) -> bool:
+        """Legacy path: MunicipalityHome → Address tab → unified search → results."""
+        logger.info("Loading BSA MunicipalityHome: %s", home_url)
+        await page.goto(home_url, wait_until="domcontentloaded", timeout=60000)
+        await self._soft_wait_after_navigation(page)
+        await self._dismiss_overlays(page)
+        await self._raise_if_security_wall(page)
 
         try:
             await page.get_by_role("tab", name="Address").click(timeout=5000)
@@ -340,21 +531,25 @@ class BSAOnlineScraper(BaseScraper):
         last_error: str | None = None
 
         for q in self._search_queries(address):
-            logger.info("Trying BS&A search query: %s", q)
+            logger.info("Trying BS&A search query (home flow): %s", q)
             await search_input.fill("")
             await search_input.fill(q)
             try:
                 await self._submit_search(page, search_input)
-                await page.wait_for_url("**/PropertySearch/**", timeout=60000)
-                await page.wait_for_load_state("networkidle")
-                await self._wait_for_search_results_ready(page)
-                await self._prefer_list_view(page)
+                # Navigation may be soft / slow; do not block only on URL.
+                try:
+                    await page.wait_for_url("**/PropertySearch**", timeout=25000)
+                except Exception:
+                    pass
+                await self._soft_wait_after_navigation(page)
+                await self._wait_for_search_results_ready(page, address, timeout_ms=45000)
+                await self._prefer_list_view(page, address)
             except Exception as e:
                 last_error = str(e)
                 logger.warning("Search navigation failed for %r: %s", q, e)
                 try:
-                    await page.goto(url, wait_until="domcontentloaded", timeout=60000)
-                    await page.wait_for_load_state("networkidle")
+                    await page.goto(home_url, wait_until="domcontentloaded", timeout=60000)
+                    await self._soft_wait_after_navigation(page)
                     await self._dismiss_overlays(page)
                     search_input = await self._get_search_input(page)
                     await search_input.wait_for(state="visible", timeout=30000)
@@ -364,38 +559,37 @@ class BSAOnlineScraper(BaseScraper):
 
             if await self._has_no_results(page):
                 logger.info("No records for query %r, trying next", q)
-                await page.goto(url, wait_until="domcontentloaded")
-                await page.wait_for_load_state("networkidle")
+                await page.goto(home_url, wait_until="domcontentloaded")
+                await self._soft_wait_after_navigation(page)
                 await self._dismiss_overlays(page)
                 search_input = await self._get_search_input(page)
                 await search_input.wait_for(state="visible", timeout=30000)
                 continue
 
             if await self._click_property_result(page, address):
-                break
+                return True
 
             logger.warning("Could not click a result for query %r", q)
-            await page.goto(url, wait_until="domcontentloaded")
-            await page.wait_for_load_state("networkidle")
+            await page.goto(home_url, wait_until="domcontentloaded")
+            await self._soft_wait_after_navigation(page)
             search_input = await self._get_search_input(page)
             await search_input.wait_for(state="visible", timeout=30000)
-        else:
-            logger.warning(
-                "All search queries failed for %s (last_error=%s)",
-                address.one_line,
-                last_error,
-            )
-            return None
 
+        logger.warning(
+            "MunicipalityHome flow failed for %s (last_error=%s)",
+            address.one_line,
+            last_error,
+        )
+        return False
+
+    async def _finalize_property_detail(self, page: Page, address: NormalizedAddress) -> PropertyRecord:
         await page.wait_for_timeout(1500)
 
-        # --- Extract data from the detail page ---
         record = await self._extract_detail(page, address)
         record.source_url = page.url
         record.source_name = self.name
         record.scraped_at = datetime.now(timezone.utc)
 
-        # --- Try to grab tax tab data ---
         try:
             tax_tab = page.locator("text=Tax").first
             if await tax_tab.count() > 0:
@@ -407,6 +601,23 @@ class BSAOnlineScraper(BaseScraper):
 
         return record
 
+    async def _do_scrape(self, page: Page, address: NormalizedAddress) -> PropertyRecord | None:
+        home = f"{MUNICIPALITY_HOME}?uid={self.uid}"
+
+        try:
+            if await self._scrape_via_direct_property_search(page, address):
+                return await self._finalize_property_detail(page, address)
+        except RuntimeError:
+            raise
+
+        try:
+            if await self._scrape_via_municipality_home(page, address, home):
+                return await self._finalize_property_detail(page, address)
+        except RuntimeError:
+            raise
+
+        return None
+
     async def _extract_detail(self, page: Page, address: NormalizedAddress) -> PropertyRecord:
         """Extract property details from the BSA detail page."""
         record = PropertyRecord(property_address=address.one_line)
@@ -416,11 +627,13 @@ class BSAOnlineScraper(BaseScraper):
         record.raw_html = html
 
         record.parcel_number = self._extract_field(body_text, [
+            r"Parcel\s*#\s*([A-Z0-9\-\.]+)",
             r"Parcel\s*(?:Number|ID|#)[:\s]*([A-Z0-9\-\.]+)",
             r"PIN[:\s]*([A-Z0-9\-\.]+)",
         ])
 
         record.owner_name = self._extract_field(body_text, [
+            r"Owned\s+By\s+([^\n]+)",
             r"Owner\s*(?:Name)?[:\s]*([^\n]+)",
             r"Taxpayer[:\s]*([^\n]+)",
         ])

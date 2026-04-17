@@ -36,15 +36,28 @@ def resolve_ordered_sources(address: NormalizedAddress) -> list[SourceConfig]:
         out.extend(db_sources)
 
     merge_yaml = os.getenv("MERGE_YAML_REGISTRY", "").lower() in ("1", "true", "yes")
-    if not out or merge_yaml:
+
+    # If Postgres returned rows but none map to a scraper we actually ship, merge YAML
+    # so Calhoun BS&A (uid 662) still runs instead of only e.g. FetchGIS placeholders.
+    def _has_implemented_scraper(sources: list[SourceConfig]) -> bool:
+        from core.orchestration.pipeline import SCRAPER_MAP
+
+        return any(bool(s.scraper and SCRAPER_MAP.get(s.scraper)) for s in sources)
+
+    need_yaml = not out or merge_yaml or not _has_implemented_scraper(out)
+    if need_yaml:
         reg = JurisdictionRegistry()
         entry = reg.lookup(address)
         if entry and entry.sources:
-            if merge_yaml or not out:
-                for s in entry.sources:
-                    if _is_duplicate(out, s):
-                        continue
-                    out.append(s)
+            for s in entry.sources:
+                if _is_duplicate(out, s):
+                    continue
+                out.append(s)
+            if not _has_implemented_scraper(out) and entry.sources:
+                logger.warning(
+                    "YAML registry has no implemented scrapers for %s",
+                    address.pipeline_id,
+                )
 
     # Prefer sources that explicitly provide tax data first
     out.sort(key=lambda s: 0 if "tax" in (s.data_types or []) else 1)
