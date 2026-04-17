@@ -1,7 +1,7 @@
 """
 Load ordered data_sources from PostgreSQL (3000+ site rows).
 
-Set USE_SITE_DATABASE=true and DATABASE_URL. Apply infrastructure/sql/site_registry.sql first.
+Set USE_SITE_DATABASE=true and DATABASE_URL. Apply backend/infrastructure/sql/site_registry.sql first.
 """
 
 from __future__ import annotations
