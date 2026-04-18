@@ -14,6 +14,8 @@ class AddressResponse(BaseModel):
     zip_code: str | None = None
     county: str | None = None
     country: str = "US"
+    latitude: float | None = None
+    longitude: float | None = None
     pipeline_id: str | None = None
 
 

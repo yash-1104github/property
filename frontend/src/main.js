@@ -12,8 +12,12 @@ app.innerHTML = `
           placeholder="21013 DANA Drive, Battle Creek, MI 49017"
           value="21013 DANA Drive, Battle Creek, MI 49017" />
       </label>
-      <label>County (optional)
+      <label>County / district (optional)
         <input name="county" type="text" placeholder="Calhoun" value="Calhoun" />
+      </label>
+      <label>Country code (optional, ISO 3166-1 alpha-2)
+        <input name="country_code" type="text" maxlength="2" placeholder="US or omit"
+          title="Leave blank for US parsing. Use GB, DE, IN, … for Nominatim + international registry." />
       </label>
       <label class="row">
         <input name="use_llm" type="checkbox" checked />
@@ -33,11 +37,13 @@ const statusEl = document.querySelector("#status");
 form.addEventListener("submit", async (e) => {
   e.preventDefault();
   const fd = new FormData(form);
+  const cc = String(fd.get("country_code") || "").trim().toUpperCase();
   const body = {
     address: String(fd.get("address") || "").trim(),
     county: String(fd.get("county") || "").trim() || null,
     use_llm: fd.get("use_llm") === "on",
   };
+  if (cc) body.country_code = cc;
 
   out.hidden = true;
   statusEl.hidden = false;

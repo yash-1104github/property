@@ -30,5 +30,7 @@ class NormalizedAddress(BaseModel):
     @property
     def one_line(self) -> str:
         street = self.full_street
-        parts = filter(None, [street, self.city, self.state, self.zip_code])
+        parts = list(filter(None, [street, self.city, self.state, self.zip_code]))
+        if self.country and self.country.upper() != "US":
+            parts.append(self.country)
         return ", ".join(parts)

@@ -16,11 +16,17 @@ async def scrape_property(req: ScrapeRequest):
     Submit a property address and receive structured property data
     including tax records, ownership info, and building details.
     """
-    logger.info("Scrape request: %s (county=%s)", req.address, req.county)
+    logger.info(
+        "Scrape request: %s (county=%s country=%s)",
+        req.address,
+        req.county,
+        req.country_code,
+    )
 
     result = await run_pipeline(
         raw_address=req.address,
         county=req.county,
+        country_code=req.country_code,
         use_llm=req.use_llm,
     )
 
@@ -33,6 +39,8 @@ async def scrape_property(req: ScrapeRequest):
         zip_code=result.address.zip_code,
         county=result.address.county,
         country=result.address.country,
+        latitude=result.address.latitude,
+        longitude=result.address.longitude,
         pipeline_id=result.address.pipeline_id,
     )
 
