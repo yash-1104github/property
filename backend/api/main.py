@@ -24,8 +24,8 @@ logging.basicConfig(
 app = FastAPI(
     title="Property Scraper API",
     description=(
-        "A distributed platform for extracting property tax records, "
-        "ownership details, and parcel information from public websites."
+        "Pluggable scrapers for public property / tax portals. US addresses use local parsing; "
+        "elsewhere pass ISO country_code and Nominatim structures the address for registry routing."
     ),
     version="0.1.0",
 )

@@ -53,7 +53,13 @@ class BSAOnlineScraper(BaseScraper):
     name = "us_michigan_bsa_online"
     requires_browser = True
 
-    def __init__(self, uid: str = BEDFORD_TWP_UID, headless: bool = True):
+    def __init__(
+        self,
+        uid: str = BEDFORD_TWP_UID,
+        headless: bool = True,
+        source_params: dict | None = None,
+    ):
+        _ = source_params  # reserved for registry metadata; BS&A does not use it
         self.uid = uid
         self.headless = headless
         self._playwright: Playwright | None = None
