@@ -2,7 +2,7 @@ from datetime import datetime
 
 from pydantic import BaseModel
 
-from core.scraping.models import BuildingInfo, SaleRecord, TaxRecord
+from core.scraping.models import BuildingInfo, LoanRecord, SaleRecord, TaxRecord
 
 
 class AddressResponse(BaseModel):
@@ -14,8 +14,6 @@ class AddressResponse(BaseModel):
     zip_code: str | None = None
     county: str | None = None
     country: str = "US"
-    latitude: float | None = None
-    longitude: float | None = None
     pipeline_id: str | None = None
 
 
@@ -39,11 +37,13 @@ class PropertyResponse(BaseModel):
     building_info: BuildingInfo | None = None
     tax_history: list[TaxRecord] = []
     sale_history: list[SaleRecord] = []
+    loan_history: list[LoanRecord] = []
 
     source_url: str | None = None
     source_name: str | None = None
     scraped_at: datetime | None = None
     confidence: float = 0.0
+    cook_treasurer_tax_status: str | None = None
 
 
 class ScrapeResponse(BaseModel):

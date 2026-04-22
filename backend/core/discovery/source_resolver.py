@@ -59,8 +59,13 @@ def resolve_ordered_sources(address: NormalizedAddress) -> list[SourceConfig]:
                     address.pipeline_id,
                 )
 
-    # Prefer sources that explicitly provide tax data first
-    out.sort(key=lambda s: 0 if "tax" in (s.data_types or []) else 1)
+    # Prefer HTTP/API sources before Playwright (fewer bot walls); then tax-heavy portals
+    def _priority(s: SourceConfig) -> tuple[int, int]:
+        http_first = 0 if not s.requires_browser else 1
+        tax_pref = 0 if "tax" in (s.data_types or []) else 1
+        return (http_first, tax_pref)
+
+    out.sort(key=_priority)
     return out
 
 

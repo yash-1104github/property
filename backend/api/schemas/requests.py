@@ -1,36 +1,32 @@
-from pydantic import BaseModel, Field, field_validator
+import os
+
+from pydantic import BaseModel, ConfigDict, Field
+
+
+def _default_use_llm() -> bool:
+    """Respect ``USE_LLM`` in the environment when the client omits ``use_llm`` (default: on)."""
+    v = (os.getenv("USE_LLM") or "true").strip().lower()
+    return v in ("1", "true", "yes", "on")
 
 
 class ScrapeRequest(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
     address: str = Field(
         ...,
         min_length=5,
         examples=["21013 DANA Drive, Battle Creek, MI 49017"],
-        description="Full property address to look up",
+        description="Full US street address to look up",
     )
     county: str | None = Field(
         None,
         examples=["Calhoun"],
-        description="County / district name (helps routing to the right data source)",
-    )
-    country_code: str | None = Field(
-        None,
-        min_length=2,
-        max_length=2,
-        examples=["US", "GB", "DE", "IN"],
-        description=(
-            "ISO 3166-1 alpha-2 country code. Omit or use US for United States (usaddress). "
-            "For any other country, set this and the address is structured via Nominatim (OSM)."
-        ),
+        description="US county name (helps route to the correct assessor / tax portal)",
     )
     use_llm: bool = Field(
-        True,
-        description="Use LLM to enrich extraction if regex scraping returns incomplete data",
+        default_factory=_default_use_llm,
+        description=(
+            "Use Gemini to enrich extraction when ``GEMINI_API_KEY`` is set. "
+            "Omit this field to use the ``USE_LLM`` env default (default: true)."
+        ),
     )
-
-    @field_validator("country_code", mode="before")
-    @classmethod
-    def _empty_country_to_none(cls, v: object) -> object:
-        if v == "" or v is None:
-            return None
-        return v

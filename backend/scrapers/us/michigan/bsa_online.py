@@ -112,6 +112,14 @@ class BSAOnlineScraper(BaseScraper):
 
         try:
             return await self._do_scrape(page, address)
+        except RuntimeError as exc:
+            # Anti-bot / security interstitial — surface to caller instead of silent None
+            if "Security Verification" in str(exc) or "BS&A blocked" in str(exc):
+                raise
+            logger.exception(
+                "Scrape failed for %s on BSA uid=%s", address.one_line, self.uid
+            )
+            return None
         except Exception:
             logger.exception(
                 "Scrape failed for %s on BSA uid=%s", address.one_line, self.uid

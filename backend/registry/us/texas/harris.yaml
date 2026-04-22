@@ -1,0 +1,36 @@
+# Harris County, Texas — HCAD public GIS parcels (REST) + optional Regrid fallback.
+# Human portal: https://hcad.org/
+# Parcel layer: https://www.gis.hctx.net/arcgis/rest/services/HCAD/Parcels/MapServer/0
+
+jurisdiction:
+  country: US
+  state: TX
+  county: Harris
+  municipality: null
+
+sources:
+  - name: HCAD Parcels — ArcGIS REST (Harris County GIS)
+    base_url: https://www.gis.hctx.net
+    search_type: address
+    data_types:
+      - parcel
+      - ownership
+      - valuation
+    scraper: us_arcgis_parcel_query
+    requires_browser: false
+    params:
+      layer_url: https://www.gis.hctx.net/arcgis/rest/services/HCAD/Parcels/MapServer/0
+      preset: harris_hcad
+    last_verified: "2026-04-19"
+
+  - name: Regrid — nationwide parcel API (optional)
+    base_url: https://regrid.com
+    search_type: address
+    data_types:
+      - parcel
+      - ownership
+    scraper: us_regrid_parcel
+    requires_browser: false
+    params:
+      regrid_path: /us/tx/harris
+    last_verified: "2026-04-19"

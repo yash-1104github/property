@@ -18,8 +18,10 @@ from core.address.normalizer import normalize_address
 from core.discovery.source_resolver import resolve_ordered_sources
 from core.extraction.llm_extractor import extract_with_llm, merge_llm_into_record
 from core.scraping.models import PropertyRecord
-from scrapers.india.india_bbmp_tax import IndiaBbmpPropertyTaxScraper
+from scrapers.us.illinois.cook_assessor_parcel_addresses import CookAssessorParcelAddressesScraper
+from scrapers.us.michigan.arcgis_parcel_query import ArcGISParcelQueryScraper
 from scrapers.us.michigan.bsa_online import BSAOnlineScraper
+from scrapers.us.regrid_parcel import RegridParcelScraper
 
 logger = logging.getLogger(__name__)
 
@@ -43,35 +45,36 @@ class ScrapeResult:
 
 
 SCRAPER_MAP = {
+    "us_arcgis_parcel_query": ArcGISParcelQueryScraper,
+    "us_cook_assessor_parcel_addresses": CookAssessorParcelAddressesScraper,
     "us_michigan_bsa_online": BSAOnlineScraper,
-    "in_india_bbmp_property_tax": IndiaBbmpPropertyTaxScraper,
+    "us_regrid_parcel": RegridParcelScraper,
 }
 
 
 async def run_pipeline(
     raw_address: str,
     county: str | None = None,
-    country_code: str | None = None,
     use_llm: bool = True,
     headless: bool = True,
 ) -> ScrapeResult:
-    """End-to-end pipeline: address in → property data out."""
+    """End-to-end pipeline: US address in → property data out."""
     start = datetime.now(timezone.utc)
 
-    # Step 1: Normalize (US default; pass ISO country_code for non-US + Nominatim routing)
-    address = normalize_address(raw_address, county=county, country_code=country_code)
+    address = normalize_address(raw_address, county=county)
     logger.info("Normalized: %s → %s (pipeline: %s)", raw_address, address.one_line, address.pipeline_id)
 
     # Step 2: Resolve ordered sources (PostgreSQL site DB when USE_SITE_DATABASE=true, else YAML registry)
     sources = resolve_ordered_sources(address)
 
     record = None
-    last_error: str | None = None
+    failures: list[str] = []
 
     if sources:
         for source in sources:
             scraper_cls = SCRAPER_MAP.get(source.scraper)
             if not scraper_cls:
+                failures.append(f"{source.name}: scraper {source.scraper!r} is not implemented in SCRAPER_MAP")
                 logger.debug("Skipping unimplemented scraper: %s (%s)", source.scraper, source.name)
                 continue
             kwargs: dict = {
@@ -90,51 +93,55 @@ async def run_pipeline(
             try:
                 record = await scraper.scrape(address)
             except Exception as exc:
-                logger.warning("Source %r failed: %s", source.name, exc)
-                last_error = str(exc)
+                msg = f"{source.name}: {type(exc).__name__}: {exc}"
+                logger.warning("Source failed: %s", msg)
+                failures.append(msg)
                 record = None
+            else:
+                if record is None:
+                    failures.append(f"{source.name}: no matching parcel data returned")
             finally:
                 await scraper.close()
 
             if record is not None:
                 break
 
-    # No configured sources for this jurisdiction — optional Michigan BS&A default (US only)
-    if (
-        record is None
-        and address.country == "US"
-        and address.state == "MI"
-        and not sources
-    ):
+    # No configured sources for this jurisdiction — optional Michigan BS&A default
+    if record is None and address.state == "MI" and not sources:
         logger.info("No registry entry — default BS&A scraper")
         scraper = BSAOnlineScraper(headless=headless)
         try:
             record = await scraper.scrape(address)
         except Exception as exc:
             logger.exception("Default BS&A scraper failed")
-            last_error = str(exc)
+            failures.append(f"BS&A (default): {type(exc).__name__}: {exc}")
             record = None
+        else:
+            if record is None:
+                failures.append("BS&A (default): no matching parcel data returned")
         finally:
             await scraper.close()
 
-    if record is None and not sources and not (
-        address.country == "US" and address.state == "MI"
-    ):
+    if record is None and not sources and address.state != "MI":
         elapsed = int((datetime.now(timezone.utc) - start).total_seconds() * 1000)
         return ScrapeResult(
             address=address,
             error=(
-                f"No data source configured for jurisdiction: {address.pipeline_id}. "
-                "Add a registry entry (YAML/DB) for this country/region, or implement the scraper."
+                f"No data source configured for this US jurisdiction: {address.pipeline_id}. "
+                "Add a registry entry (YAML/DB) or implement the scraper."
             ),
             duration_ms=elapsed,
         )
 
     if record is None:
         elapsed = int((datetime.now(timezone.utc) - start).total_seconds() * 1000)
-        msg = last_error or (
-            "All sources returned no data — address may not exist on the target sites"
-        )
+        if failures:
+            msg = "All sources failed:\n" + "\n".join(failures)
+        else:
+            msg = (
+                "All sources returned no data — address may not exist on the target sites, "
+                "or every source was skipped (unimplemented scraper)."
+            )
         return ScrapeResult(address=address, error=msg, duration_ms=elapsed)
 
     # Step 4: LLM enrichment via Gemini (if enabled and API key available)
