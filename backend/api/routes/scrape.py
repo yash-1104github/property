@@ -18,11 +18,23 @@ async def scrape_property(req: ScrapeRequest):
     """
     logger.info("Scrape request: %s (county=%s)", req.address, req.county)
 
-    result = await run_pipeline(
-        raw_address=req.address,
-        county=req.county,
-        use_llm=req.use_llm,
-    )
+    try:
+        result = await run_pipeline(
+            raw_address=req.address,
+            county=req.county,
+            use_llm=req.use_llm,
+            include_loan_history=req.include_loan_history,
+        )
+    except Exception as e:
+        logger.warning("Pipeline failed: %s: %s", type(e).__name__, e)
+        addr_resp = AddressResponse(raw_input=req.address)
+        return ScrapeResponse(
+            success=False,
+            address=addr_resp,
+            data=None,
+            error=f"Pipeline error: {type(e).__name__}: {e}",
+            duration_ms=0,
+        )
 
     addr_resp = AddressResponse(
         raw_input=result.address.raw_input,

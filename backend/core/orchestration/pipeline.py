@@ -9,6 +9,8 @@ Given a raw address string, this module:
   5. Returns a structured PropertyRecord
 """
 
+from __future__ import annotations
+
 import logging
 import os
 from datetime import datetime, timezone
@@ -19,9 +21,11 @@ from core.discovery.source_resolver import resolve_ordered_sources
 from core.extraction.llm_extractor import extract_with_llm, merge_llm_into_record
 from core.scraping.models import PropertyRecord
 from scrapers.us.illinois.cook_assessor_parcel_addresses import CookAssessorParcelAddressesScraper
+from scrapers.us.illinois.cook_clerk_recording_loans import try_fetch_clerk_loan_records
+from scrapers.us.illinois.cook_clerk_recording_loans import CookClerkRecordingLoansScraper
 from scrapers.us.michigan.arcgis_parcel_query import ArcGISParcelQueryScraper
 from scrapers.us.michigan.bsa_online import BSAOnlineScraper
-from scrapers.us.regrid_parcel import RegridParcelScraper
+from scrapers.us.regrid_parcel import RegridParcelScraper, regrid_path_for_address
 
 logger = logging.getLogger(__name__)
 
@@ -47,6 +51,7 @@ class ScrapeResult:
 SCRAPER_MAP = {
     "us_arcgis_parcel_query": ArcGISParcelQueryScraper,
     "us_cook_assessor_parcel_addresses": CookAssessorParcelAddressesScraper,
+    "us_cook_clerk_recording_loans": CookClerkRecordingLoansScraper,
     "us_michigan_bsa_online": BSAOnlineScraper,
     "us_regrid_parcel": RegridParcelScraper,
 }
@@ -57,6 +62,7 @@ async def run_pipeline(
     county: str | None = None,
     use_llm: bool = True,
     headless: bool = True,
+    include_loan_history: bool = False,
 ) -> ScrapeResult:
     """End-to-end pipeline: US address in → property data out."""
     start = datetime.now(timezone.utc)
@@ -105,6 +111,61 @@ async def run_pipeline(
 
             if record is not None:
                 break
+
+    # Step 3b: If no sale_history from primary sources, try Regrid as fallback
+    if record and not record.sale_history and os.getenv("REGRID_API_TOKEN"):
+        logger.info("No sale history from primary sources, trying Regrid fallback")
+        regrid_scraper = RegridParcelScraper(
+            headless=headless,
+            source_params={"regrid_path": regrid_path_for_address(address)},
+        )
+        try:
+            regrid_record = await regrid_scraper.scrape(address)
+            if regrid_record and regrid_record.sale_history:
+                logger.info("Regrid provided %d sale records", len(regrid_record.sale_history))
+                # Merge sale history (keep existing, append Regrid's)
+                existing_docs = {(s.date, s.document_number) for s in record.sale_history}
+                for sale in regrid_record.sale_history:
+                    key = (sale.date, sale.document_number)
+                    if key not in existing_docs:
+                        record.sale_history.append(sale)
+                record.sale_history.sort(key=lambda x: x.date or "", reverse=True)
+                # Update confidence if we got new data
+                record.confidence = min(record.confidence + 0.05, 1.0)
+        except Exception as exc:
+            logger.warning("Regrid fallback failed: %s", exc)
+        finally:
+            await regrid_scraper.close()
+
+    # Step 3c: Try to fetch loan history for Cook County IL
+    if (
+        include_loan_history
+        and record
+        and record.parcel_number
+        and address.state == "IL"
+        and address.county == "Cook"
+    ):
+        logger.info("Attempting to fetch loan history for PIN: %s", record.parcel_number)
+        try:
+            # Build address_data for fallback lookup
+            address_data = {
+                "street_number": address.street_number,
+                "street_name": address.street_name,
+                "zip_code": address.zip_code,
+            }
+            loan_records = await try_fetch_clerk_loan_records(
+                record.parcel_number,
+                headless=headless,
+                address_data=address_data,
+            )
+            if loan_records:
+                record.loan_history.extend(loan_records)
+                logger.info("Added %d loan records from Cook Clerk", len(loan_records))
+                record.confidence = min(record.confidence + 0.05, 1.0)
+            else:
+                logger.info("No loan records returned from Cook Clerk (portal may be blocked)")
+        except Exception as exc:
+            logger.warning("Loan history fetch failed: %s: %s", type(exc).__name__, exc)
 
     # No configured sources for this jurisdiction — optional Michigan BS&A default
     if record is None and address.state == "MI" and not sources:

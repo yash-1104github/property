@@ -1,4 +1,5 @@
 import os
+from typing import Optional
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -18,7 +19,7 @@ class ScrapeRequest(BaseModel):
         examples=["21013 DANA Drive, Battle Creek, MI 49017"],
         description="Full US street address to look up",
     )
-    county: str | None = Field(
+    county: Optional[str] = Field(
         None,
         examples=["Calhoun"],
         description="US county name (helps route to the correct assessor / tax portal)",
@@ -28,5 +29,12 @@ class ScrapeRequest(BaseModel):
         description=(
             "Use Gemini to enrich extraction when ``GEMINI_API_KEY`` is set. "
             "Omit this field to use the ``USE_LLM`` env default (default: true)."
+        ),
+    )
+    include_loan_history: bool = Field(
+        default=False,
+        description=(
+            "Fetch loan/mortgage history from external sources (e.g., Cook County Clerk recording portal). "
+            "Note: This may be blocked by Cloudflare protection. Requires playwright installed."
         ),
     )

@@ -6,6 +6,8 @@ raw HTML (stripped of boilerplate) to Gemini and ask it to extract structured
 property fields. This works across languages, layouts, and naming conventions.
 """
 
+from __future__ import annotations
+
 import json
 import logging
 import os
@@ -137,7 +139,7 @@ async def _gemini_rest_api(api_key: str, model: str, prompt: str) -> str | None:
         f":generateContent?key={api_key}"
     )
 
-    async with httpx.AsyncClient(timeout=60.0) as client:
+    async with httpx.AsyncClient(timeout=httpx.Timeout(60.0, connect=10.0)) as client:
         resp = await client.post(
             url,
             headers={"Content-Type": "application/json"},

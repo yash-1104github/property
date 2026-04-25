@@ -1,77 +1,79 @@
 from datetime import datetime
+from typing import Optional
+
 from pydantic import BaseModel
 
 
 class SaleRecord(BaseModel):
-    date: str | None = None
-    price: float | None = None
-    buyer: str | None = None
-    seller: str | None = None
-    instrument: str | None = None
+    date: Optional[str] = None
+    price: Optional[float] = None
+    buyer: Optional[str] = None
+    seller: Optional[str] = None
+    instrument: Optional[str] = None
 
 
 class TaxRecord(BaseModel):
-    year: int | None = None
-    season: str | None = None
-    total_tax: float | None = None
-    total_paid: float | None = None
-    total_due: float | None = None
-    last_paid: str | None = None
+    year: Optional[int] = None
+    season: Optional[str] = None
+    total_tax: Optional[float] = None
+    total_paid: Optional[float] = None
+    total_due: Optional[float] = None
+    last_paid: Optional[str] = None
     # Cook County IL (and similar): certified/board/mailed assessed total for that roll year
-    assessed_total: float | None = None
+    assessed_total: Optional[float] = None
 
 
 class LoanRecord(BaseModel):
-    recorded_date: str | None = None
-    execution_date: str | None = None
-    amount: float | None = None
-    document_number: str | None = None
-    document_type: str | None = None
-    property_address: str | None = None
-    source_name: str | None = None
+    recorded_date: Optional[str] = None
+    execution_date: Optional[str] = None
+    amount: Optional[float] = None
+    document_number: Optional[str] = None
+    document_type: Optional[str] = None
+    property_address: Optional[str] = None
+    source_name: Optional[str] = None
 
 
 class BuildingInfo(BaseModel):
-    year_built: int | None = None
-    style: str | None = None
-    exterior: str | None = None
-    total_living_area: str | None = None
-    heating_type: str | None = None
-    bedrooms: str | None = None
-    bathrooms: str | None = None
-    fireplace: str | None = None
-    stories: str | None = None
-    basement: str | None = None
-    garage: str | None = None
+    year_built: Optional[int] = None
+    style: Optional[str] = None
+    exterior: Optional[str] = None
+    total_living_area: Optional[str] = None
+    heating_type: Optional[str] = None
+    bedrooms: Optional[str] = None
+    bathrooms: Optional[str] = None
+    fireplace: Optional[str] = None
+    stories: Optional[str] = None
+    basement: Optional[str] = None
+    garage: Optional[str] = None
 
 
 class PropertyRecord(BaseModel):
-    parcel_number: str | None = None
-    owner_name: str | None = None
-    owner_address: str | None = None
-    property_address: str | None = None
-    property_type: str | None = None
-    school_district: str | None = None
-    zoning: str | None = None
+    parcel_number: Optional[str] = None
+    owner_name: Optional[str] = None
+    owner_address: Optional[str] = None
+    property_address: Optional[str] = None
+    property_type: Optional[str] = None
+    school_district: Optional[str] = None
+    zoning: Optional[str] = None
 
-    assessed_value: float | None = None
-    taxable_value: float | None = None
-    sev: float | None = None
+    assessed_value: Optional[float] = None
+    taxable_value: Optional[float] = None
+    sev: Optional[float] = None
 
-    acreage: float | None = None
-    lot_size_sqft: float | None = None
-    legal_description: str | None = None
+    acreage: Optional[float] = None
+    lot_size_sqft: Optional[float] = None
+    legal_description: Optional[str] = None
 
-    building_info: BuildingInfo | None = None
+    building_info: Optional[BuildingInfo] = None
     tax_history: list[TaxRecord] = []
     sale_history: list[SaleRecord] = []
     loan_history: list[LoanRecord] = []
 
-    source_url: str | None = None
-    source_name: str | None = None
-    scraped_at: datetime | None = None
+    source_url: Optional[str] = None
+    source_name: Optional[str] = None
+    scraped_at: Optional[datetime] = None
     confidence: float = 0.0
     # Cook Treasurer Playwright enrich: merged | treasurer_shell_no_bills | … (see cook_treasurer_tax)
-    cook_treasurer_tax_status: str | None = None
-    raw_html: str | None = None
-    screenshot_path: str | None = None
+    cook_treasurer_tax_status: Optional[str] = None
+    raw_html: Optional[str] = None
+    screenshot_path: Optional[str] = None
