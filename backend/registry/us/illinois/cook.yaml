@@ -25,9 +25,14 @@ sources:
       treasurer_headless: true
       treasurer_search_url: https://www.cookcountytreasurer.com/yourpropertytaxoverviewsearch.aspx
       loan_history_enrich: true
-      mortgages_2011_resource_url: https://datacatalog.cookcountyil.gov/resource/33fu-uwca.json
-      mortgages_2012_resource_url: https://datacatalog.cookcountyil.gov/resource/myuk-usmm.json
-      mortgages_2013_2015_resource_url: https://datacatalog.cookcountyil.gov/resource/4f2q-h3b7.json
+      # NOTE (ROOT CAUSE): these year-batch exports are partial-year datasets and are NOT
+      # suitable as the primary source for "full loan history" PIN lookups:
+      #   - 33fu-uwca: 2011 only
+      #   - myuk-usmm: 2012-Jan only
+      #   - 4f2q-h3b7: 2013-2015 only
+      # Fix: use the full/live recorder dataset in the loan scraper:
+      #   Primary:  fc9e-k9vb
+      #   Fallback: 4f2q-h3b7 (only as fallback)
       # Clerk portal is often Cloudflare-blocked for automated clients; enable only when needed.
       clerk_loan_scrape: false
     last_verified: "2026-04-22"
@@ -56,3 +61,41 @@ sources:
     params:
       regrid_path: /us/il/cook
     last_verified: "2026-04-21"
+
+  # ── Loan / Mortgage Recording History via Socrata Open Data ─────────────
+  - name: Cook County Recorder of Deeds — Loan Recordings (Socrata API)
+    base_url: https://datacatalog.cookcountyil.gov
+    search_type: pin_or_address
+    data_types:
+      - loan_history
+      - mortgage
+      - deed_of_trust
+    scraper: us_cook_clerk_recording_loans
+    requires_browser: false
+    params:
+      # Primary dataset for mortgage recordings
+      dataset_url: https://datacatalog.cookcountyil.gov/resource/fc9e-k9vb.json
+      # Fallback dataset (partial years; use only if primary is empty)
+      fallback_dataset_url: https://datacatalog.cookcountyil.gov/resource/4f2q-h3b7.json
+      # Optional: set SOCRATA_APP_TOKEN env var for higher rate limits
+      # Free tier: ~1,000 requests/hour | With token: ~10,000 requests/hour
+      max_records: 50
+      # Document types to capture
+      doc_types:
+        - MORTGAGE
+        - MTG
+        - DEED OF TRUST
+        - DOT
+        - HOME EQUITY
+        - HELOC
+        - CONSTRUCTION LOAN
+        - LAND TRUST MORTGAGE
+        - ASSIGNMENT OF MORTGAGE
+        - RELEASE OF MORTGAGE
+        - SATISFACTION OF MORTGAGE
+        - PARTIAL RELEASE
+        - SUBORDINATION AGREEMENT
+    # This source depends on the assessor having run first to get the PIN
+    depends_on:
+      - us_cook_assessor_parcel_addresses
+    last_verified: "2026-04-24"

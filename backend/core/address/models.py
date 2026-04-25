@@ -1,19 +1,21 @@
+from typing import Optional
+
 from pydantic import BaseModel
 
 
 class NormalizedAddress(BaseModel):
     raw_input: str
-    street_number: str | None = None
-    street_name: str | None = None
-    street_suffix: str | None = None
-    street_direction: str | None = None
-    unit: str | None = None
-    city: str | None = None
-    state: str | None = None
-    zip_code: str | None = None
-    county: str | None = None
+    street_number: Optional[str] = None
+    street_name: Optional[str] = None
+    street_suffix: Optional[str] = None
+    street_direction: Optional[str] = None
+    unit: Optional[str] = None
+    city: Optional[str] = None
+    state: Optional[str] = None
+    zip_code: Optional[str] = None
+    county: Optional[str] = None
     country: str = "US"
-    pipeline_id: str | None = None
+    pipeline_id: Optional[str] = None
 
     @property
     def full_street(self) -> str:

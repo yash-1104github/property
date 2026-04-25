@@ -7,6 +7,8 @@ Used as Tier 1 before escalating to Playwright. Works well for:
 - PDF downloads
 """
 
+from __future__ import annotations
+
 import logging
 from datetime import datetime, timezone
 
@@ -42,7 +44,7 @@ class GenericHTTPScraper(BaseScraper):
         self.timeout = timeout
 
     async def health_check(self) -> bool:
-        async with httpx.AsyncClient(headers=DEFAULT_HEADERS, timeout=self.timeout) as client:
+        async with httpx.AsyncClient(headers=DEFAULT_HEADERS, timeout=httpx.Timeout(10.0, connect=5.0)) as client:
             try:
                 r = await client.head(self.search_url, follow_redirects=True)
                 return r.status_code < 400
@@ -58,7 +60,7 @@ class GenericHTTPScraper(BaseScraper):
 
         async with httpx.AsyncClient(
             headers=DEFAULT_HEADERS,
-            timeout=self.timeout,
+            timeout=httpx.Timeout(10.0, connect=5.0),
             follow_redirects=True,
         ) as client:
             if self.method == "POST":

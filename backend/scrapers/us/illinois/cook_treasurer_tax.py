@@ -11,11 +11,31 @@ Search: https://www.cookcountytreasurer.com/yourpropertytaxoverviewsearch.aspx
 The form POSTs to ``setsearchparameters.aspx`` for both the PIN step and the overview
 response; that URL alone does **not** mean another PIN submit is required. The page
 loads **reCAPTCHA v3** into ``GoogleCaptchaToken`` before Continue is accepted.
+
+ANTI-BOT MITIGATION:
+  - Site uses reCAPTCHA v3 and bot detection
+  - Blocked by: AWS, VPS, Railway, Render, DigitalOcean (datacenter IPs)
+  - Works from: Residential IPs
+  
+ENVIRONMENT VARIABLES:
+  - COOK_TREASURER_HEADLESS=false  → Use visible browser (recommended)
+  - COOK_TREASURER_TIMEOUT_MS      → Custom timeout (default: 60000)
+  - COOK_TREASURER_DELAY_MS       → Random delay before submit (default: 1000-3000ms)
+
+ROOT CAUSE & FIX (treasurer_shell_no_bills)
+------------------------------------------
+If you see `treasurer_shell_no_bills`, the request reached the Treasurer site but was
+served a "shell" page with no bill values due to anti-bot / reCAPTCHA gating.
+
+Fix:
+  - Run on a residential IP (datacenter ASNs are commonly blocked)
+  - Set `COOK_TREASURER_HEADLESS=false` (visible Playwright browser)
 """
 
 from __future__ import annotations
 
 import logging
+import os
 import re
 from dataclasses import dataclass
 from bs4 import BeautifulSoup
@@ -29,6 +49,11 @@ def _with_treasurer_tax_status(record: PropertyRecord, status: str) -> PropertyR
 logger = logging.getLogger(__name__)
 
 DEFAULT_SEARCH_URL = "https://www.cookcountytreasurer.com/yourpropertytaxoverviewsearch.aspx"
+
+# Anti-bot evasion settings
+COOK_TREASURER_HEADLESS = os.getenv("COOK_TREASURER_HEADLESS", "true").lower() != "false"
+COOK_TREASURER_TIMEOUT_MS = int(os.getenv("COOK_TREASURER_TIMEOUT_MS", "60000"))
+COOK_TREASURER_DELAY_MS = int(os.getenv("COOK_TREASURER_DELAY_MS", "2000"))
 
 
 @dataclass

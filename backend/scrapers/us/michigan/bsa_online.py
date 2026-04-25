@@ -14,6 +14,8 @@ Navigation flow:
   6. Extract data from detail panels (Assessing + Tax tabs)
 """
 
+from __future__ import annotations
+
 import logging
 import re
 from datetime import datetime, timezone

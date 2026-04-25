@@ -24,11 +24,23 @@ Registry params:
   treasurer_headless — Playwright headless for Treasurer only (default: scraper ``headless`` arg;
               override with env ``COOK_TREASURER_HEADLESS``). Headless runs often get no bill HTML.
   treasurer_search_url — Treasurer PIN search page URL (has a sensible default).
-  loan_history_enrich — Query Cook open-data mortgage extracts by PIN (default: true).
-  mortgages_2011_resource_url / mortgages_2012_resource_url / mortgages_2013_2015_resource_url — Socrata JSON endpoints.
+  loan_history_enrich — Fetch Recorder loan/recording history by PIN (default: true).
+  loan_dataset_url — Primary Recorder dataset URL (default: fc9e-k9vb full/live).
+  loan_fallback_dataset_url — Fallback dataset URL (default: 4f2q-h3b7 partial years).
   clerk_loan_scrape — When true, probe the Clerk recording portal (often Cloudflare-blocked); prefer env ``COOK_CLERK_RECORDING_SCRAPE=true``.
   app_token — Optional Socrata application token; else ``COOK_COUNTY_SOCRATA_APP_TOKEN``
               or ``SODA_APP_TOKEN`` environment variables.
+
+ROOT CAUSE & FIX (empty loan_history)
+------------------------------------
+The Assessor returns a raw 14-digit PIN (e.g. "13151140390000"). Recorder datasets index
+PINs in dashed format (e.g. "13-15-114-039-0000"). Prior versions queried year-batch
+exports using the raw PIN, which returned zero matches.
+
+Fix:
+  - Normalize PIN to dashed format before querying.
+  - Use the full/live Recorder dataset (fc9e-k9vb) as the primary source.
+  - Keep 4f2q-h3b7 (2013-2015) only as a fallback.
 """
 
 from __future__ import annotations
@@ -54,9 +66,8 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_RESOURCE = "https://datacatalog.cookcountyil.gov/resource/3723-97qp.json"
 DEFAULT_ASSESSED_VALUES = "https://datacatalog.cookcountyil.gov/resource/uzyt-m557.json"
-DEFAULT_MORTGAGES_2011 = "https://datacatalog.cookcountyil.gov/resource/33fu-uwca.json"
-DEFAULT_MORTGAGES_2012 = "https://datacatalog.cookcountyil.gov/resource/myuk-usmm.json"
-DEFAULT_MORTGAGES_2013_2015 = "https://datacatalog.cookcountyil.gov/resource/4f2q-h3b7.json"
+DEFAULT_RECORDER_LOANS_PRIMARY = "https://datacatalog.cookcountyil.gov/resource/fc9e-k9vb.json"
+DEFAULT_RECORDER_LOANS_FALLBACK = "https://datacatalog.cookcountyil.gov/resource/4f2q-h3b7.json"
 
 DEFAULT_HEADERS = {
     "User-Agent": (
@@ -97,6 +108,18 @@ def _floatish(v: Any) -> float | None:
         return None
 
 
+def _normalize_cook_pin_dashed(raw_pin: str) -> str:
+    """
+    Cook County PIN normalization:
+      "13151140390000"      → "13-15-114-039-0000"
+      "13-15-114-039-0000"  → "13-15-114-039-0000"
+    """
+    digits = re.sub(r"\D", "", str(raw_pin or ""))
+    if len(digits) == 14:
+        return f"{digits[0:2]}-{digits[2:4]}-{digits[4:7]}-{digits[7:10]}-{digits[10:14]}"
+    return str(raw_pin or "").strip()
+
+
 def _assessed_row_to_tax_record(row: dict[str, Any]) -> TaxRecord | None:
     raw_y = row.get("year")
     if raw_y is None or str(raw_y).strip() == "":
@@ -134,14 +157,15 @@ class CookAssessorParcelAddressesScraper(BaseScraper):
         if le is None:
             le = True
         self._loan_enrich = le is True or str(le).lower() in ("1", "true", "yes")
-        self._mortgages_2011_resource = (
-            self.params.get("mortgages_2011_resource_url") or DEFAULT_MORTGAGES_2011
+        self._loan_primary_resource = (
+            self.params.get("loan_dataset_url")
+            or self.params.get("dataset_url")
+            or DEFAULT_RECORDER_LOANS_PRIMARY
         ).rstrip()
-        self._mortgages_2012_resource = (
-            self.params.get("mortgages_2012_resource_url") or DEFAULT_MORTGAGES_2012
-        ).rstrip()
-        self._mortgages_2013_2015_resource = (
-            self.params.get("mortgages_2013_2015_resource_url") or DEFAULT_MORTGAGES_2013_2015
+        self._loan_fallback_resource = (
+            self.params.get("loan_fallback_dataset_url")
+            or self.params.get("fallback_dataset_url")
+            or DEFAULT_RECORDER_LOANS_FALLBACK
         ).rstrip()
         if "clerk_loan_scrape" in self.params:
             ck = self.params["clerk_loan_scrape"]
@@ -185,7 +209,7 @@ class CookAssessorParcelAddressesScraper(BaseScraper):
 
     async def health_check(self) -> bool:
         try:
-            async with httpx.AsyncClient(headers=self._headers(), timeout=20.0) as client:
+            async with httpx.AsyncClient(headers=self._headers(), timeout=httpx.Timeout(20.0, connect=5.0)) as client:
                 r = await client.get(self._resource, params={"$limit": 1})
                 return r.status_code == 200 and r.text.strip().startswith("[")
         except httpx.HTTPError:
@@ -405,24 +429,25 @@ class CookAssessorParcelAddressesScraper(BaseScraper):
                 return []
             return [x for x in data if isinstance(x, dict)]
 
-        rows: list[dict] = []
-        rows.extend(await _get(self._mortgages_2011_resource, f"pin = '{_soql_str(pin)}'"))
-        rows.extend(await _get(self._mortgages_2012_resource, f"pin = '{_soql_str(pin)}'"))
-        rows.extend(await _get(self._mortgages_2013_2015_resource, f"pin = '{_soql_str(pin)}'"))
+        # Recorder datasets use dashed PIN format.
+        pin_dashed = _normalize_cook_pin_dashed(pin)
+        rows = await _get(self._loan_primary_resource, f"pin = '{_soql_str(pin_dashed)}'", limit=50)
+        if not rows and self._loan_fallback_resource:
+            rows = await _get(self._loan_fallback_resource, f"pin = '{_soql_str(pin_dashed)}'", limit=50)
 
         out: list[LoanRecord] = []
         seen: set[tuple[str, str]] = set()
 
         for r in rows:
-            doc = str(r.get("doc_number") or r.get("document_number") or "").strip()
+            doc = str(r.get("document_number") or r.get("doc_number") or r.get("instrument_number") or "").strip()
             rdate = str(r.get("recorded_date") or "").strip()
             key = (doc, rdate)
             if key in seen:
                 continue
             seen.add(key)
 
-            amount = _floatish(r.get("consideration_amount"))
-            doc_type = str(r.get("doc_type") or r.get("document_type") or "").strip() or None
+            amount = _floatish(r.get("consideration_amount") or r.get("consideration"))
+            doc_type = str(r.get("document_type") or r.get("doc_type") or "").strip() or None
             exec_date = str(r.get("execution_date") or "").strip() or None
             prop_addr = (
                 str(r.get("location_1_address") or r.get("location_address") or r.get("street") or "").strip()

@@ -1,4 +1,5 @@
 from datetime import datetime
+from typing import Optional
 
 from pydantic import BaseModel
 
@@ -7,50 +8,50 @@ from core.scraping.models import BuildingInfo, LoanRecord, SaleRecord, TaxRecord
 
 class AddressResponse(BaseModel):
     raw_input: str
-    street_number: str | None = None
-    street_name: str | None = None
-    city: str | None = None
-    state: str | None = None
-    zip_code: str | None = None
-    county: str | None = None
+    street_number: Optional[str] = None
+    street_name: Optional[str] = None
+    city: Optional[str] = None
+    state: Optional[str] = None
+    zip_code: Optional[str] = None
+    county: Optional[str] = None
     country: str = "US"
-    pipeline_id: str | None = None
+    pipeline_id: Optional[str] = None
 
 
 class PropertyResponse(BaseModel):
-    parcel_number: str | None = None
-    owner_name: str | None = None
-    owner_address: str | None = None
-    property_address: str | None = None
-    property_type: str | None = None
-    school_district: str | None = None
-    zoning: str | None = None
+    parcel_number: Optional[str] = None
+    owner_name: Optional[str] = None
+    owner_address: Optional[str] = None
+    property_address: Optional[str] = None
+    property_type: Optional[str] = None
+    school_district: Optional[str] = None
+    zoning: Optional[str] = None
 
-    assessed_value: float | None = None
-    taxable_value: float | None = None
-    sev: float | None = None
+    assessed_value: Optional[float] = None
+    taxable_value: Optional[float] = None
+    sev: Optional[float] = None
 
-    acreage: float | None = None
-    lot_size_sqft: float | None = None
-    legal_description: str | None = None
+    acreage: Optional[float] = None
+    lot_size_sqft: Optional[float] = None
+    legal_description: Optional[str] = None
 
-    building_info: BuildingInfo | None = None
+    building_info: Optional[BuildingInfo] = None
     tax_history: list[TaxRecord] = []
     sale_history: list[SaleRecord] = []
     loan_history: list[LoanRecord] = []
 
-    source_url: str | None = None
-    source_name: str | None = None
-    scraped_at: datetime | None = None
+    source_url: Optional[str] = None
+    source_name: Optional[str] = None
+    scraped_at: Optional[datetime] = None
     confidence: float = 0.0
-    cook_treasurer_tax_status: str | None = None
+    cook_treasurer_tax_status: Optional[str] = None
 
 
 class ScrapeResponse(BaseModel):
     success: bool
     address: AddressResponse
-    data: PropertyResponse | None = None
-    error: str | None = None
+    data: Optional[PropertyResponse] = None
+    error: Optional[str] = None
     duration_ms: int = 0
 
 
